@@ -1,0 +1,111 @@
+import numpy as np
+import cv2
+import random
+import glob
+import math
+
+# 定义标定误差函数
+def calibration_error(params, object_points, image_points, shape):
+    camera_matrix = np.array([[params[0], 0, params[1]], [0, params[2], params[3]], [0, 0, 1]], dtype=np.float64)
+    dist_coeffs = np.array([params[4], params[5], params[6], params[7]], dtype=np.float64)
+    mean_error = 0
+    for i in range(len(object_points)):
+        image_points2, _ = cv2.projectPoints(object_points[i], rvecs[i], tvecs[i], camera_matrix, dist_coeffs)
+        error = (cv2.norm(image_points[i],image_points2, cv2.NORM_L2))/len(image_points2)
+        mean_error+=error
+    return mean_error
+
+# 粒子群算法
+def particle_swarm_optimization(object_points, image_points, shape):
+    # 定义参数范围
+    bounds = [(450,500), (310,330),(450,500), (230,250), (-0.5, 0.5), (-0.5, 0.5), (-0.005, 0.005), (-0.005, 0.005)]
+
+    # 定义粒子数目和迭代次数
+    n_particles = 50
+    n_iterations = 100
+
+    # 定义最优解
+    global_best_solution = np.zeros((n_iterations,len(bounds)))
+    global_best_cost = None
+    self_best_solution = np.zeros((n_particles, len(bounds)))
+    self_best_cost = np.zeros(n_particles)
+    cost = np.zeros(n_particles)
+
+    # 初始化粒子位置和速度
+    particles_position = np.zeros((n_particles, len(bounds)))
+    particles_velocity = np.zeros((n_particles, len(bounds)))
+
+    for i in range(n_particles):
+        if i==0:
+            particles_position[0, 0]=512.1275
+            particles_position[0, 1]=319.04490
+            particles_position[0, 2]=518.352167
+            particles_position[0, 3]=241.53017547
+            particles_position[0, 4]=0
+            particles_position[0, 5]=0
+            particles_position[0, 6]=0
+            particles_position[0, 7]=0
+            print(calibration_error(particles_position[0],object_points, image_points, shape))
+        else:
+            for j in range(len(bounds)):
+                particles_position[i, j] = random.uniform(bounds[j][0], bounds[j][1])
+                particles_velocity[i, j] = random.uniform(-1, 1)
+
+    # 迭代寻找最优解
+    for j in range(n_iterations):#迭代的次数j
+        # 计算当前适应度值
+        for i in range(n_particles):
+            #更新个体最优解
+            cost[i]= calibration_error(particles_position[i], object_points, image_points, shape)
+            if self_best_cost[i]==0 or cost[i]<self_best_cost[i]:
+                self_best_cost[i]=cost[i]
+                self_best_solution[i]=np.copy(particles_position[i])
+        # 更新全局最优解
+        if global_best_cost is None or np.min(cost) < global_best_cost:
+            index = np.argmin(cost)
+            global_best_solution[j] = np.copy(particles_position[index])
+            global_best_cost = np.min(cost)
+        else:
+            global_best_solution[j]=global_best_solution[j-1]
+
+        # 更新每个粒子的速度和位置
+        for k in range(n_particles):
+
+            r1 = random.uniform(0, 1)
+            r2 = random.uniform(0, 1)
+
+            # 更新速度
+            particles_velocity[k] = 0.5 * particles_velocity[k] + 0.8 * r1 * (self_best_solution[k] - particles_position[k]) + 0.8 * r2 * (global_best_solution[j] - particles_position[k])
+
+            # 更新位置
+            particles_position[k] += particles_velocity[k]
+            #particles_position[k] = np.clip(particles_position[k], bounds[0][0], bounds[-1][1])
+        print(calibration_error(global_best_solution[j], obj_points, img_points, img_shape))
+    return global_best_solution[n_iterations-1]
+
+obj_points = []
+img_points = []
+img_shape = 88
+objp = np.zeros((11*8, 3), np.float32)
+objp[:, :2] = np.mgrid[0:11, 0:8].T.reshape(-1, 2)
+images = glob.glob('D:/test_photo/*.jpg')
+# Find corners in calibration images
+for fname in images:
+    img = cv2.imread(fname)
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    ret, corners = cv2.findChessboardCorners(gray, (11,8), None)
+    if ret == True:
+        criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
+        corners2 = cv2.cornerSubPix(gray,corners, (11,11), (-1,-1), criteria)#亚像素获取
+        img_points.append(corners2)#corners or corners2
+        obj_points.append(objp)
+_, _, _, rvecs, tvecs = cv2.calibrateCamera(obj_points, img_points, gray.shape[::-1], None, None)
+G_best=particle_swarm_optimization(obj_points,  img_points, img_shape)
+print("PSO结果:")
+print(G_best)
+mtx = np.array([G_best[0], 0, G_best[1], 0, G_best[2], G_best[3], 0, 0, 1]).reshape((3, 3))
+dist = G_best[4:]
+print(mtx)
+print(dist)
+G_cost=calibration_error(G_best, obj_points, img_points, img_shape)
+print(G_cost)
